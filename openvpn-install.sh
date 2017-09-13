@@ -111,7 +111,7 @@ EOF
     ifup eth0:1
     PRIV_IP=192.168.2.1
   else
-    PRIV_IP=$(ifconfig eth0:1 | awk '/inet/{print $2}')
+    PRIV_IP=$(ifconfig eth0:1 | awk '/inet /{print $2}')
   fi
   
   # Setup local caching recursive server
@@ -416,8 +416,8 @@ EOF
     ;;
   7)
     installLocalDNS
-    echo 'push "dhcp-option DNS 127.0.0.1"' >> /etc/openvpn/server.conf
-    echo "push \"dhcp-option DNS $PRIV_IP\"" >> /etc/openvpn/server.conf
+    echo 'push "dhcp-option DNS 10.8.0.1"' >> /etc/openvpn/server.conf
+    echo 'push \"dhcp-option DNS 10.8.0.1"' >> /etc/openvpn/server.conf
     ;;
   esac
   cat >> /etc/openvpn/server.conf <<- EOF
