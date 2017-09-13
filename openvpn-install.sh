@@ -1,4 +1,24 @@
 #!/bin/bash
+# The MIT License (MIT)
+# 
+# Copyright (c) 2013 Nyr
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so,
+# subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 # OpenVPN road warrior installer for Debian, Ubuntu and CentOS
 
 # This script will work on Debian, Ubuntu, CentOS and probably other distros
@@ -64,49 +84,89 @@ installLocalDNS() {
   if [[ ! -e  /usr/sbin/named ]]; then 
     if [[ "$OS" = 'debian' ]]; then
       apt-get install -y bind9
-      touch /etc/bind/openvpn.script
+      touch /etc/bind/.openvpn.script
     fi
   else
     yum install -y bind bind-utils
-    touch /etc/named/openvpn.script
+    touch /etc/named/.openvpn.script
+  fi
+  
+  # Create a private network for DNS, use existing interface if possible
+  if [[ -z "$(ifconfig | grep eth0:1)" ]]; then
+    if [[ "$OS" = 'debian' ]]; then 
+      cat >> /etc/network/interfaces << EOF
+iface eth0:1 inet static
+  address 192.168.2.1
+  netmask 255.255.255.0
+EOF
+      touch /etc/network/.openvpn.script
+    else 
+      cat >> /etc/sysconfig/network-scripts/ifcfg-eth0:1 << EOF
+DEVICE=eth0:1
+IPADDR=192.168.2.1
+NETMASK=255.255.255.0
+EOF
+      touch /etc/sysconfig/network-scripts/.openvpn.script
+    fi
+    ifup eth0:1
+    PRIV_IP=192.168.2.1
+  else
+    PRIV_IP=$(ifconfig eth0:1 | awk '/inet/{print $2}')
   fi
   
   # Setup local caching recursive server
-  if [[ "OS" = 'debian' ]]; then 
+  if [[ "$OS" = 'debian' ]]; then 
     cat >> /etc/bind/named.conf.options << EOF
-listen-on { 127.0.0.1; $IP; };
-recursion yes;
-allow-query { localnets; };
+  listen-on { 127.0.0.1; $PRIV_IP; };
+  recursion yes;
+  allow-query { localnets; };
 EOF
     systemctl restart bind9
   else
     cat >> /etc/named.conf << EOF
-listen-on { 127.0.0.1; $IP; };
-recursion yes;
-allow-query { localnets; };
+  listen-on { 127.0.0.1; $PRIV_IP; };
+  recursion yes;
+  allow-query { localnets; };
 EOF
     systemctl restart named
   fi
   
+  # Configure system nameserver
   sed -i "s/nameserver/# nameserver/" /etc/resolv.conf
   echo "nameserver 127.0.0.1" >> /etc/resolv.conf
 }
 
 removeLocalDNS() {
   # Remove config lines added in setup 
-  sed -zi "s/\n\s*listen-on { 127.0.0.1; $IP; };\n\s*recursion yes;\n\s*allow-query { localnets; };//" /etc/bind/named.conf.options
-  sed -i "s/nameserver 127.0.0.1//"
-  sed -i "s/# nameserver/nameserver/"
+  sed -i "s/nameserver 127.0.0.1//" /etc/resolv.conf
+  sed -i "s/# nameserver/nameserver/" /etc/resolv.conf
   
-  if [[ "$OS" == 'debian' ]]; then
-    apt-get remove -y bind9
-    if [[ -e /etc/bind/openvpn.script ]]
+  # Uninstall bind and clean dirs if dummy file present
+  if [[ "$OS" = 'debian' ]]; then
+    sed -zi "s/\n\s*listen-on { 127.0.0.1; $PRIV_IP; };\n\s*recursion yes;\n\s*allow-query { localnets; };//" /etc/bind/named.conf.options
+    if [[ -e /etc/bind/.openvpn.script ]]
+      apt-get remove -y bind9
       rm -rf /etc/bind
     fi
+    
+    # Remove private interface if it was created with this script
+    if [[ -e /etc/network/.openvpn.script ]]; then
+      ifdown eth0:1
+      rm /etc/network/.openvpn.script
+      sed -zi "s/\n\s*iface eth0:1 inet static\n\saddress 192.168.2.1\n\snetmask 255.255.255.0//" /etc/network/interfaces
+    fi
   else
-    yum remove -y bind bind-utils
-    if [[ -e /etc/named/openvpn.script ]]
+    sed -zi "s/\n\s*listen-on { 127.0.0.1; $PRIV_IP; };\n\s*recursion yes;\n\s*allow-query { localnets; };//" /etc/named.conf
+    if [[ -e /etc/named/.openvpn.script ]]; then
+      if
+      yum remove -y bind. bind-utils
       rm -rf /etc/named*
+    fi
+    
+    if [[ -e /etc/sysconfig/network-scripts/.openvpn.script ]]; then
+      ifdown eth0:1
+      rm /etc/sysconfig/network-scripts/.openvpn.script
+      rm /etc/sysconfig/network-scripts/ifcfg-eth0:1
     fi
   fi
 }
@@ -268,7 +328,7 @@ else
   echo "   5) Hurricane Electric"
   echo "   6) Verisign"
   echo "   7) Local"
-  read -p "DNS [1-6]: " -e -i 1 DNS
+  read -p "DNS [1-7]: " -e -i 1 DNS
   echo ""
   echo "Finally, tell me your name for the client certificate"
   echo "Please, use one word only, no special characters"
@@ -357,7 +417,7 @@ EOF
   7)
     installLocalDNS
     echo 'push "dhcp-option DNS 127.0.0.1"' >> /etc/openvpn/server.conf
-    echo "push \"dhcp-option DNS $IP\"" >> /etc/openvpn/server.conf
+    echo "push \"dhcp-option DNS $PRIV_IP\"" >> /etc/openvpn/server.conf
     ;;
   esac
   cat >> /etc/openvpn/server.conf <<- EOF
