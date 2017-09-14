@@ -144,7 +144,7 @@ removeLocalDNS() {
   # Uninstall bind and clean dirs if dummy file present
   if [[ "$OS" = 'debian' ]]; then
     sed -zi "s/\n\s*listen-on { 127.0.0.1; $PRIV_IP; };\n\s*recursion yes;\n\s*allow-query { localnets; };//" /etc/bind/named.conf.options
-    if [[ -e /etc/bind/.openvpn.script ]]
+    if [[ -e /etc/bind/.openvpn.script ]]; then
       apt-get remove -y bind9
       rm -rf /etc/bind
     fi
@@ -158,8 +158,7 @@ removeLocalDNS() {
   else
     sed -zi "s/\n\s*listen-on { 127.0.0.1; $PRIV_IP; };\n\s*recursion yes;\n\s*allow-query { localnets; };//" /etc/named.conf
     if [[ -e /etc/named/.openvpn.script ]]; then
-      if
-      yum remove -y bind. bind-utils
+      yum remove -y bind bind-utils
       rm -rf /etc/named*
     fi
     
@@ -417,10 +416,10 @@ EOF
   7)
     installLocalDNS
     echo 'push "dhcp-option DNS 10.8.0.1"' >> /etc/openvpn/server.conf
-    echo 'push \"dhcp-option DNS 10.8.0.1"' >> /etc/openvpn/server.conf
+    echo 'push "dhcp-option DNS 10.8.0.1"' >> /etc/openvpn/server.conf
     ;;
   esac
-  cat >> /etc/openvpn/server.conf <<- EOF
+  cat >> /etc/openvpn/server.conf << EOF
 keepalive 10 120
 cipher AES-256-CBC
 comp-lzo
