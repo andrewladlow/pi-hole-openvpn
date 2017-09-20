@@ -705,6 +705,10 @@ version_check_dnsmasq() {
   else
     sed -i '/^server=@DNS2@/d' ${dnsmasq_pihole_01_location}
   fi
+  
+  # Force dnsmasq to listen on pi-hole IP only (with local upstream using 127.0.0.1)
+  echo "except-interface=lo" >> ${dnsmasq_pihole_01_location}
+  echo "bind-interfaces" ${dnsmasq_pihole_01_location}
 
   sed -i 's/^#conf-dir=\/etc\/dnsmasq.d$/conf-dir=\/etc\/dnsmasq.d/' ${dnsmasq_conf}
 
