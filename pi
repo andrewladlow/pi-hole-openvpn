@@ -1,0 +1,34 @@
+server {
+  listen 10.8.0.1:80;
+# listen [::]:80;
+
+  server_name pi.hole;
+
+  root /var/www/dns;
+  index pihole/index.php index.php;
+  error_page 404 =200 /pihole/index.php;
+
+  error_log /var/log/nginx/pi_error.log warn;
+  access_log /var/log/nginx/pi_access.log combined;
+
+  location ~ .php$ {
+    include snippets/fastcgi-php.conf;
+    fastcgi_pass unix:/var/run/php/php7.0-fpm.sock;
+
+    if ($request_uri ~ /admin/) {
+      add_header X-Pi-hole "The Pi-hole Web interface is working!" always;
+      add_header X-Frame-Options "DENY" always;
+    }
+  }
+
+  add_header X-Pi-hole "A black hole for Internet advertisements." always;
+
+  location /*.js {
+    index pihole/index.js
+    error_page 404 =200 /pihole/index.js;
+  }
+
+  location / {
+
+  }
+}

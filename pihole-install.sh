@@ -21,7 +21,7 @@ set -e
 tmpLog=/tmp/pihole-install.log
 instalLogLoc=/etc/pihole/install.log
 setupVars=/etc/pihole/setupVars.conf
-lighttpdConfig=/etc/lighttpd/lighttpd.conf
+nginxConfig=/etc/nginx/nginx.conf
 
 webInterfaceGitUrl="https://github.com/pi-hole/AdminLTE.git"
 webInterfaceDir="/var/www/html/admin"
@@ -107,10 +107,12 @@ if command -v apt-get &> /dev/null; then
   # #########################################
   INSTALLER_DEPS=(apt-utils dialog debconf dhcpcd5 git ${iproute_pkg} whiptail)
   PIHOLE_DEPS=(bc cron curl dnsmasq dnsutils iputils-ping lsof netcat sudo unzip wget)
-  PIHOLE_WEB_DEPS=(lighttpd ${phpVer}-common ${phpVer}-cgi)
-  LIGHTTPD_USER="www-data"
-  LIGHTTPD_GROUP="www-data"
-  LIGHTTPD_CFG="lighttpd.conf.debian"
+  PIHOLE_WEB_DEPS=(nginx php7.0-fpm)
+  NGINX_USER="www-data"
+  NGINX_GROUP="www-data"
+  NGINX_CFG="nginx.conf"
+  NGINX_SITE="pi"
+  PHP_CFG="fastcgi-php.conf"
   DNSMASQ_USER="dnsmasq"
 
   test_dpkg_lock() {
@@ -134,17 +136,21 @@ elif command -v rpm &> /dev/null; then
 
 # Fedora and family update cache on every PKG_INSTALL call, no need for a separate update.
   UPDATE_PKG_CACHE=":"
+  # Fetch PHP 7.0 repo
+  rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
   PKG_INSTALL=(${PKG_MANAGER} install -y)
   PKG_COUNT="${PKG_MANAGER} check-update | egrep '(.i686|.x86|.noarch|.arm|.src)' | wc -l"
   INSTALLER_DEPS=(dialog git iproute net-tools newt procps-ng)
   PIHOLE_DEPS=(bc bind-utils cronie curl dnsmasq findutils nmap-ncat sudo unzip wget)
-  PIHOLE_WEB_DEPS=(lighttpd lighttpd-fastcgi php php-common php-cli)
+  PIHOLE_WEB_DEPS=(nginx php70w-fpm)
   if ! grep -q 'Fedora' /etc/redhat-release; then
     INSTALLER_DEPS=("${INSTALLER_DEPS[@]}" "epel-release");
   fi
-    LIGHTTPD_USER="lighttpd"
-    LIGHTTPD_GROUP="lighttpd"
-    LIGHTTPD_CFG="lighttpd.conf.fedora"
+    NGINX_USER="www-data"
+    NGINX_GROUP="www-data"
+    NGINX_CFG="nginx.conf"
+    NGINX_SITE="pi"
+    PHP_CFG="fastcg-php.conf"
     DNSMASQ_USER="nobody"
 
 else
@@ -528,7 +534,7 @@ setDNS() {
       Comodo ""
       DNSWatch ""
       Custom "")
-  DNSchoices=$(whiptail --separate-output --menu "Select Upstream DNS Provider. To use your own, select Custom." ${r} ${c} 6 \
+  DNSchoices=$(whiptail --separate-output --menu "Select Upstream DNS Provider. To use your own, select Custom." ${r} ${c} 10 \
     "${DNSChooseOptions[@]}" 2>&1 >/dev/tty) || \
     { echo "::: Cancel selected. Exiting"; exit 1; }
   case ${DNSchoices} in
@@ -561,6 +567,11 @@ setDNS() {
       echo "::: Using DNS.WATCH servers."
       PIHOLE_DNS_1="84.200.69.80"
       PIHOLE_DNS_2="84.200.70.40"
+      ;;
+    Local)
+      echo "::: Using Local servers."
+      PIHOLE_DNS_1="127.0.0.1"
+      PIHOLE_DNS_2=$(ifconfig eth0:1 | awk '/inet /{print $2}')
       ;;
     Custom)
       until [[ ${DNSSettingsCorrect} = True ]]; do
@@ -749,21 +760,18 @@ installConfigs() {
   echo "::: Installing configs from ${PI_HOLE_LOCAL_REPO}..."
   version_check_dnsmasq
 
-  #Only mess with lighttpd configs if user has chosen to install web interface
+  # Only mess with nginx configs if user has chosen to install web interface
   if [[ ${INSTALL_WEB} == true ]]; then
-    if [ ! -d "/etc/lighttpd" ]; then
-      mkdir /etc/lighttpd
-      chown "${USER}":root /etc/lighttpd
-    elif [ -f "/etc/lighttpd/lighttpd.conf" ]; then
-      mv /etc/lighttpd/lighttpd.conf /etc/lighttpd/lighttpd.conf.orig
-    fi
-    cp ${PI_HOLE_LOCAL_REPO}/advanced/${LIGHTTPD_CFG} /etc/lighttpd/lighttpd.conf
-    mkdir -p /var/run/lighttpd
-    chown ${LIGHTTPD_USER}:${LIGHTTPD_GROUP} /var/run/lighttpd
-    mkdir -p /var/cache/lighttpd/compress
-    chown ${LIGHTTPD_USER}:${LIGHTTPD_GROUP} /var/cache/lighttpd/compress
-    mkdir -p /var/cache/lighttpd/uploads
-    chown ${LIGHTTPD_USER}:${LIGHTTPD_GROUP} /var/cache/lighttpd/uploads
+    if [ ! -d "/etc/nginx" ]; then
+      mkdir -p /etc/nginx/{sites-available, sites-enabled, snippets}
+      chown "${USER}":root /etc/nginx
+    elif [ -f "/etc/nginx/nginx.conf" ]; then
+      mv /etc/nginx/nginx/.conf /etc/nginx/nginx.conf.orig
+    fi}
+    cp $(NGINX_CFG) /etc/nginx/nginx.conf
+    cp $(NGINX_SITE) /etc/nginx/sites-available/pi
+    ln -s /etc/nginx/sites-available/pi /etc/nginx/sites-enabled/pi
+    cp $(PHP_CFG) /etc/nginx/snippets/fastcgi-php.conf
   fi
 }
 
@@ -912,7 +920,9 @@ installPiholeWeb() {
       echo ":::     Existing index.php detected, not overwriting"
     else
       echo -n ":::     index.php missing, replacing... "
-      cp ${PI_HOLE_LOCAL_REPO}/advanced/index.php /var/www/html/pihole/
+      #cp ${PI_HOLE_LOCAL_REPO}/advanced/index.php /var/www/html/pihole/
+      # Replace index.php with nginx version (see: https://github.com/pi-hole/pi-hole/wiki/Nginx-Configuration)
+      cp index.php /var/www/html/pihole/
       echo " done!"
     fi
 
@@ -936,10 +946,10 @@ installPiholeWeb() {
     echo ":::     Creating directory for blocking page"
     install -d /var/www/html/pihole
     install -D ${PI_HOLE_LOCAL_REPO}/advanced/{index,blockingpage}.* /var/www/html/pihole/
-    if [ -f /var/www/html/index.lighttpd.html ]; then
-      mv /var/www/html/index.lighttpd.html /var/www/html/index.lighttpd.orig
+    if [ -f /var/www/html/index.html ]; then
+      mv /var/www/html/index.html /var/www/html/index.orig
     else
-      printf "\n:::\tNo default index.lighttpd.html file found... not backing up"
+      printf "\n:::\tNo default index.html file found... not backing up"
     fi
     echo " done!"
   fi
@@ -949,10 +959,10 @@ installPiholeWeb() {
   echo -n "::: Installing sudoer file..."
   mkdir -p /etc/sudoers.d/
   cp ${PI_HOLE_LOCAL_REPO}/advanced/pihole.sudo /etc/sudoers.d/pihole
-  # Add lighttpd user (OS dependent) to sudoers file
-  echo "${LIGHTTPD_USER} ALL=NOPASSWD: /usr/local/bin/pihole" >> /etc/sudoers.d/pihole
+  # Add lnginx user (OS dependent) to sudoers file
+  echo "${NGINX_USER} ALL=NOPASSWD: /usr/local/bin/pihole" >> /etc/sudoers.d/pihole
 
-  if [[ "$LIGHTTPD_USER" == "lighttpd" ]]; then
+  if [[ "$NGINX_USER" == "www-data" ]]; then
     # Allow executing pihole via sudo with Fedora
     # Usually /usr/local/bin is not permitted as directory for sudoable programms
     echo "Defaults secure_path = /sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin" >> /etc/sudoers.d/pihole
@@ -1093,9 +1103,9 @@ installPihole() {
     if [ ! -d "/var/www/html" ]; then
       mkdir -p /var/www/html
     fi
-    chown ${LIGHTTPD_USER}:${LIGHTTPD_GROUP} /var/www/html
+    chown ${NGINX_USER}:${NGINX_GROUP} /var/www/html
     chmod 775 /var/www/html
-    usermod -a -G ${LIGHTTPD_GROUP} pihole
+    usermod -a -G ${NGINX_GROUP} pihole
     if [ -x "$(command -v lighty-enable-mod)" ]; then
       lighty-enable-mod fastcgi fastcgi-php > /dev/null || true
     else
@@ -1417,7 +1427,7 @@ main() {
 
     stop_service dnsmasq
     if [[ ${INSTALL_WEB} == true ]]; then
-      stop_service lighttpd
+      stop_service nginx
     fi
     # Determine available interfaces
     get_available_interfaces
@@ -1482,8 +1492,10 @@ main() {
   enable_service dnsmasq
 
   if [[ ${INSTALL_WEB} == true ]]; then
-    start_service lighttpd
-    enable_service lighttpd
+    start_service php7.0-fpm
+    start_service nginx
+    enable_service php7.0-fpm
+    enable_service nginx
   fi
 
   runGravity
