@@ -1,5 +1,5 @@
 server {
-  listen 10.8.0.1:80;
+  listen @IP@:80;
 # listen [::]:80;
 
   server_name pi.hole;

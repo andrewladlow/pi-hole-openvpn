@@ -21,7 +21,6 @@ set -e
 tmpLog=/tmp/pihole-install.log
 instalLogLoc=/etc/pihole/install.log
 setupVars=/etc/pihole/setupVars.conf
-nginxConfig=/etc/nginx/nginx.conf
 
 webInterfaceGitUrl="https://github.com/pi-hole/AdminLTE.git"
 webInterfaceDir="/var/www/html/admin"
@@ -533,6 +532,7 @@ setDNS() {
       Norton ""
       Comodo ""
       DNSWatch ""
+      Local ""
       Custom "")
   DNSchoices=$(whiptail --separate-output --menu "Select Upstream DNS Provider. To use your own, select Custom." ${r} ${c} 10 \
     "${DNSChooseOptions[@]}" 2>&1 >/dev/tty) || \
@@ -708,7 +708,7 @@ version_check_dnsmasq() {
   
   # Force dnsmasq to listen on pi-hole IP only (with local upstream using 127.0.0.1)
   echo "except-interface=lo" >> ${dnsmasq_pihole_01_location}
-  echo "bind-interfaces" ${dnsmasq_pihole_01_location}
+  echo "bind-interfaces" >> ${dnsmasq_pihole_01_location}
 
   sed -i 's/^#conf-dir=\/etc\/dnsmasq.d$/conf-dir=\/etc\/dnsmasq.d/' ${dnsmasq_conf}
 
@@ -769,13 +769,15 @@ installConfigs() {
     if [ ! -d "/etc/nginx" ]; then
       mkdir -p /etc/nginx/{sites-available, sites-enabled, snippets}
       chown "${USER}":root /etc/nginx
-    elif [ -f "/etc/nginx/nginx.conf" ]; then
-      mv /etc/nginx/nginx/.conf /etc/nginx/nginx.conf.orig
-    fi}
-    cp $(NGINX_CFG) /etc/nginx/nginx.conf
-    cp $(NGINX_SITE) /etc/nginx/sites-available/pi
+    elif [ -e "/etc/nginx/nginx.conf" ]; then
+      mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.orig
+    fi
+    cp $NGINX_CFG /etc/nginx/nginx.conf
+    sed -i "s/@IP@/$IPV4_ADDRESS/" $(NGINX_SITE)
+    cp $NGINX_SITE /etc/nginx/sites-available/pi
     ln -s /etc/nginx/sites-available/pi /etc/nginx/sites-enabled/pi
-    cp $(PHP_CFG) /etc/nginx/snippets/fastcgi-php.conf
+    cp $PHP_CFG /etc/nginx/snippets/fastcgi-php.conf
+    mkdir /var/log/nginx && chown www-data:www-data /var/log/nginx
   fi
 }
 
