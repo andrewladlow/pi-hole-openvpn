@@ -677,7 +677,7 @@ version_check_dnsmasq() {
     if grep -q ${dnsmasq_pihole_id_string} ${dnsmasq_conf}; then
       echo " it is from a previous Pi-hole install."
       echo -n ":::    Backing up dnsmasq.conf to dnsmasq.conf.orig..."
-      mv -f ${dnsmasq_conf} ${dnsmasq_conf_orig}
+      cp ${dnsmasq_conf} ${dnsmasq_conf_orig}
       echo " done."
       echo -n ":::    Restoring default dnsmasq.conf..."
       cp ${dnsmasq_original_config} ${dnsmasq_conf}
@@ -751,7 +751,11 @@ installScripts() {
     install -o "${USER}" -Dm755 -t "${PI_HOLE_INSTALL_DIR}" ./automated\ install/uninstall.sh
     install -o "${USER}" -Dm755 -t /usr/local/bin/ pihole
     install -Dm644 ./advanced/bash-completion/pihole /etc/bash_completion.d/pihole
+    # See https://github.com/pi-hole/pi-hole/wiki/Nginx-Configuration
+    sed 's/$_SERVER\["SERVER_NAME"\]),/$_SERVER\["HTTP_HOST"\]),/' /var/www/html/admin/scripts/pi-hole/php/auth.php
     echo " done."
+    # TODO more elegant solution
+    cd -
   else
     echo " *** ERROR: Local repo ${PI_HOLE_LOCAL_REPO} not found, exiting."
     exit 1
@@ -773,11 +777,11 @@ installConfigs() {
       mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.orig
     fi
     cp $NGINX_CFG /etc/nginx/nginx.conf
-    sed -i "s/@IP@/$IPV4_ADDRESS/" $(NGINX_SITE)
+    sed -i "s|@IP@|$IPV4_ADDRESS|" $NGINX_SITE
     cp $NGINX_SITE /etc/nginx/sites-available/pi
-    ln -s /etc/nginx/sites-available/pi /etc/nginx/sites-enabled/pi
+    ln -sf /etc/nginx/sites-available/pi /etc/nginx/sites-enabled/pi
     cp $PHP_CFG /etc/nginx/snippets/fastcgi-php.conf
-    mkdir /var/log/nginx && chown www-data:www-data /var/log/nginx
+    mkdir -p /var/log/nginx && chown www-data:www-data /var/log/nginx
   fi
 }
 
@@ -922,7 +926,7 @@ installPiholeWeb() {
   echo ":::"
   echo "::: Installing pihole custom index page..."
   if [ -d "/var/www/html/pihole" ]; then
-    if [ -f "/var/www/html/pihole/index.php" ]; then
+    if [ -e "/var/www/html/pihole/index.php" ]; then
       echo ":::     Existing index.php detected, not overwriting"
     else
       echo -n ":::     index.php missing, replacing... "
