@@ -95,6 +95,7 @@ installLocalDNS() {
   if [[ -z "$(ifconfig | grep eth0:1)" ]]; then
     if [[ "$OS" = 'debian' ]]; then 
       cat >> /etc/network/interfaces << EOF
+      
 iface eth0:1 inet static
   address 192.168.2.1
   netmask 255.255.255.0
@@ -116,29 +117,23 @@ EOF
   
   # Setup local caching recursive server
   if [[ "$OS" = 'debian' ]]; then 
-    cat >> /etc/bind/named.conf.options << EOF
-  listen-on { 127.0.0.1; $PRIV_IP; };
-  recursion yes;
-  allow-query { localnets; };
-EOF
+    sed -i "s/@PRIV_IP@/$PRIV_IP/" named.conf.options
+    mv -S .bak -fb named.conf.options /etc/bind/named.conf.options
     systemctl restart bind9
   else
-    cat >> /etc/named.conf << EOF
-  listen-on { 127.0.0.1; $PRIV_IP; };
-  recursion yes;
-  allow-query { localnets; };
-EOF
+    sed -i "s/@PRIV_IP@/$PRIV_IP/" named.conf.options
+    mv -S .bak -fb named.conf.options /etc/named.conf   
     systemctl restart named
   fi
   
   # Configure system nameserver
   sed -i "s/nameserver/# nameserver/" /etc/resolv.conf
-  echo "nameserver 127.0.0.1" >> /etc/resolv.conf
+  echo -e "\nnameserver 127.0.0.1" >> /etc/resolv.conf
 }
 
 removeLocalDNS() {
   # Remove config lines added in setup 
-  sed -i "s/nameserver 127.0.0.1//" /etc/resolv.conf
+  sed -i "nameserver 127.0.0.1/d" /etc/resolv.conf
   sed -i "s/# nameserver/nameserver/" /etc/resolv.conf
   
   # Uninstall bind and clean dirs if dummy file present
@@ -147,6 +142,8 @@ removeLocalDNS() {
     if [[ -e /etc/bind/.openvpn.script ]]; then
       apt-get remove -y bind9
       rm -rf /etc/bind
+    else
+      mv -f /etc/bind/named.conf.options.bak /etc/bind/named.conf.options
     fi
     
     # Remove private interface if it was created with this script
@@ -160,6 +157,8 @@ removeLocalDNS() {
     if [[ -e /etc/named/.openvpn.script ]]; then
       yum remove -y bind bind-utils
       rm -rf /etc/named*
+    else
+      mv -f /etc/named.conf.bak /etc/named.conf
     fi
     
     if [[ -e /etc/sysconfig/network-scripts/.openvpn.script ]]; then

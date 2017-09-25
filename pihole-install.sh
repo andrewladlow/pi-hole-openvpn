@@ -963,7 +963,7 @@ installPiholeWeb() {
   echo -n "::: Installing sudoer file..."
   mkdir -p /etc/sudoers.d/
   cp ${PI_HOLE_LOCAL_REPO}/advanced/pihole.sudo /etc/sudoers.d/pihole
-  # Add lnginx user (OS dependent) to sudoers file
+  # Add nginx user (OS dependent) to sudoers file
   echo "${NGINX_USER} ALL=NOPASSWD: /usr/local/bin/pihole" >> /etc/sudoers.d/pihole
 
   if [[ "$NGINX_USER" == "www-data" ]]; then
@@ -1110,11 +1110,6 @@ installPihole() {
     chown ${NGINX_USER}:${NGINX_GROUP} /var/www/html
     chmod 775 /var/www/html
     usermod -a -G ${NGINX_GROUP} pihole
-    if [ -x "$(command -v lighty-enable-mod)" ]; then
-      lighty-enable-mod fastcgi fastcgi-php > /dev/null || true
-    else
-      printf "\n:::\tWarning: 'lighty-enable-mod' utility not found. Please ensure fastcgi is enabled if you experience issues.\n"
-    fi
   fi
   installScripts
   installConfigs
