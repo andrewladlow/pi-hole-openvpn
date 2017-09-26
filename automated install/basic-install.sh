@@ -933,7 +933,7 @@ installPiholeWeb() {
       cp ${PI_HOLE_LOCAL_REPO}/advanced/index.php /var/www/html/pihole/
       echo " done!"
     fi
-
+    
     # Replace index.php with nginx version (see: https://github.com/pi-hole/pi-hole/wiki/Nginx-Configuration)
     cp index.php /var/www/html/pihole/
     

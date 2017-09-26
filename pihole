@@ -1,0 +1,429 @@
+#!/bin/bash
+# Pi-hole: A black hole for Internet advertisements
+# (c) 2017 Pi-hole, LLC (https://pi-hole.net)
+# Network-wide ad blocking via your own hardware.
+#
+# Controller for all pihole scripts and functions.
+#
+# This file is copyright under the latest version of the EUPL.
+# Please see LICENSE file for your rights under this license.
+
+readonly PI_HOLE_SCRIPT_DIR="/opt/pihole"
+readonly wildcardlist="/etc/dnsmasq.d/03-pihole-wildcard.conf"
+
+# Must be root to use this tool
+if [[ ! $EUID -eq 0 ]];then
+  if [[ -x "$(command -v sudo)" ]]; then
+    exec sudo bash "$0" "$@"
+    exit $?
+  else
+    echo "::: sudo is needed to run pihole commands.  Please run this script as root or install sudo."
+    exit 1
+  fi
+fi
+
+webpageFunc() {
+  source /opt/pihole/webpage.sh
+  main "$@"
+  exit 0
+}
+
+whitelistFunc() {
+ "${PI_HOLE_SCRIPT_DIR}"/list.sh "$@"
+  exit 0
+}
+
+blacklistFunc() {
+  "${PI_HOLE_SCRIPT_DIR}"/list.sh "$@"
+  exit 0
+}
+
+wildcardFunc() {
+  "${PI_HOLE_SCRIPT_DIR}"/list.sh "$@"
+  exit 0
+}
+
+debugFunc() {
+  local automated
+  local web
+
+  # Pull off the `debug` leaving passed call augmentation flags in $1
+  shift
+  if [[ "$@" == *"-a"* ]]; then
+    automated="true"
+  fi
+  if [[ "$@" == *"-w"* ]]; then
+    web="true"
+  fi
+
+  AUTOMATED=${automated:-} WEBCALL=${web:-} "${PI_HOLE_SCRIPT_DIR}"/piholeDebug.sh
+  exit 0
+}
+
+flushFunc() {
+  "${PI_HOLE_SCRIPT_DIR}"/piholeLogFlush.sh "$@"
+  exit 0
+}
+
+updatePiholeFunc() {
+  "${PI_HOLE_SCRIPT_DIR}"/update.sh
+  exit 0
+}
+
+reconfigurePiholeFunc() {
+  /etc/.pihole/automated\ install/basic-install.sh --reconfigure
+  exit 0;
+}
+
+updateGravityFunc() {
+  "${PI_HOLE_SCRIPT_DIR}"/gravity.sh "$@"
+  exit 0
+}
+
+scanList(){
+  domain="${1}"
+  list="${2}"
+  method="${3}"
+  if [[ ${method} == "-exact" ]] ; then
+    grep -i -E "(^|\s)${domain}($|\s)" "${list}"
+  else
+    grep -i "${domain}" "${list}"
+  fi
+}
+
+processWildcards() {
+  IFS="." read -r -a array <<< "${1}"
+  for (( i=${#array[@]}-1; i>=0; i-- )); do
+    ar=""
+    for (( j=${#array[@]}-1; j>${#array[@]}-i-2; j-- )); do
+      if [[ $j == $((${#array[@]}-1)) ]]; then
+        ar="${array[$j]}"
+      else
+        ar="${array[$j]}.${ar}"
+      fi
+    done
+    echo "${ar}"
+  done
+}
+
+queryFunc() {
+  domain="${2}"
+  method="${3}"
+  lists=( /etc/pihole/list.* /etc/pihole/blacklist.txt)
+  for list in ${lists[@]}; do
+    if [ -e "${list}" ]; then
+      result=$(scanList ${domain} ${list} ${method})
+      # Remove empty lines before couting number of results
+      count=$(sed '/^\s*$/d' <<< "$result" | wc -l)
+      echo "::: ${list} (${count} results)"
+      if [[ ${count} > 0 ]]; then
+        echo "${result}"
+      fi
+      echo ""
+    else
+      echo "::: ${list} does not exist"
+      echo ""
+    fi
+  done
+
+  # Scan for possible wildcard matches
+  if [ -e "${wildcardlist}" ]; then
+    local wildcards=($(processWildcards "${domain}"))
+    for domain in ${wildcards[@]}; do
+      result=$(scanList "\/${domain}\/" ${wildcardlist})
+      # Remove empty lines before couting number of results
+      count=$(sed '/^\s*$/d' <<< "$result" | wc -l)
+      if [[ ${count} > 0 ]]; then
+        echo "::: Wildcard blocking ${domain} (${count} results)"
+        echo "${result}"
+        echo ""
+      fi
+    done
+  fi
+  exit 0
+}
+
+chronometerFunc() {
+  shift
+  "${PI_HOLE_SCRIPT_DIR}"/chronometer.sh "$@"
+  exit 0
+}
+
+
+uninstallFunc() {
+  "${PI_HOLE_SCRIPT_DIR}"/uninstall.sh
+  exit 0
+}
+
+versionFunc() {
+  shift
+  "${PI_HOLE_SCRIPT_DIR}"/version.sh "$@"
+  exit 0
+}
+
+restartDNS() {
+  dnsmasqPid=$(pidof dnsmasq)
+  if [[ "${dnsmasqPid}" ]]; then
+    # Service already running - reload config
+    if [[ -x "$(command -v systemctl)" ]]; then
+      systemctl restart dnsmasq
+    else
+      service dnsmasq restart
+    fi
+  else
+    # Service not running, start it up
+    if [[ -x "$(command -v systemctl)" ]]; then
+      systemctl start dnsmasq
+    else
+      service dnsmasq start
+    fi
+  fi
+}
+
+piholeEnable() {
+  if [[ "${2}" == "-h" ]] || [[ "${2}" == "--help" ]]; then
+    echo "Usage: pihole disable [time]
+Example: 'pihole disable', or 'pihole disable 5m'
+Disable Pi-hole subsystems
+
+Time:
+  #s                  Disable Pi-hole functionality for # second(s)
+  #m                  Disable Pi-hole functionality for # minute(s)"
+    exit 0
+  elif [[ "${1}" == "0" ]]; then
+    # Disable Pi-hole
+    sed -i 's/^addn-hosts=\/etc\/pihole\/gravity.list/#addn-hosts=\/etc\/pihole\/gravity.list/' /etc/dnsmasq.d/01-pihole.conf
+    sed -i 's/^addn-hosts=\/etc\/pihole\/black.list/#addn-hosts=\/etc\/pihole\/black.list/' /etc/dnsmasq.d/01-pihole.conf
+    if [[ -e "$wildcardlist" ]]; then
+      mv "$wildcardlist" "/etc/pihole/wildcard.list"
+    fi
+    echo "::: Blocking has been disabled!"
+    if [[ $# > 1 ]]; then
+      if [[ "${2}" == *"s"* ]]; then
+        tt=${2%"s"}
+        echo "::: Blocking will be re-enabled in ${tt} seconds"
+        nohup bash -c "sleep ${tt}; pihole enable" </dev/null &>/dev/null &
+      elif [[ "${2}" == *"m"* ]]; then
+        tt=${2%"m"}
+        echo "::: Blocking will be re-enabled in ${tt} minutes"
+        tt=$((${tt}*60))
+        nohup bash -c "sleep ${tt}; pihole enable" </dev/null &>/dev/null &
+      else
+        echo "::: Unknown format for delayed reactivation of the blocking!"
+        echo "::: Example:"
+        echo ":::    pihole disable 5s    -    will disable blocking for 5 seconds"
+        echo ":::    pihole disable 7m    -    will disable blocking for 7 minutes"
+        echo "::: Blocking will not automatically be re-enabled!"
+      fi
+    fi
+  else
+    # Enable Pi-hole
+    echo "::: Blocking has been enabled!"
+    sed -i 's/^#addn-hosts/addn-hosts/' /etc/dnsmasq.d/01-pihole.conf
+    if [[ -e "/etc/pihole/wildcard.list" ]]; then
+      mv "/etc/pihole/wildcard.list" "$wildcardlist"
+    fi
+  fi
+  restartDNS
+}
+
+piholeLogging() {
+  shift
+  if [[ "${1}" == "-h" ]] || [[ "${1}" == "--help" ]]; then
+    echo "Usage: pihole logging [options]
+Example: 'pihole logging on'
+Specify whether the Pi-hole log should be used
+
+Options:
+  on                  Enable the Pi-hole log at /var/log/pihole.log
+  off                 Disable the Pi-hole log at /var/log/pihole.log"
+    exit 0
+  elif [[ "${1}" == "off" ]]; then
+    # Disable logging
+    sed -i 's/^log-queries/#log-queries/' /etc/dnsmasq.d/01-pihole.conf
+    sed -i 's/^QUERY_LOGGING=true/QUERY_LOGGING=false/' /etc/pihole/setupVars.conf
+    pihole -f
+    echo "::: Logging has been disabled!"
+  elif [[ "${1}" == "on" ]]; then
+    # Enable logging
+    sed -i 's/^#log-queries/log-queries/' /etc/dnsmasq.d/01-pihole.conf
+    sed -i 's/^QUERY_LOGGING=false/QUERY_LOGGING=true/' /etc/pihole/setupVars.conf
+    echo "::: Logging has been enabled!"
+  else
+    echo "::: Invalid option passed, please pass 'on' or 'off'"
+    exit 1
+  fi
+  restartDNS
+}
+
+piholeStatus() {
+  if [[ "$(netstat -plnt | grep -c ':53 ')" -gt "0" ]]; then
+    if [[ "${1}" != "web" ]]; then
+      echo "::: DNS service is running"
+    fi
+  else
+    if [[ "${1}" == "web" ]]; then
+      echo "-1";
+    else
+      echo "::: DNS service is NOT running"
+    fi
+    return
+  fi
+
+  if [[ "$(grep -i "^#addn-hosts=/" /etc/dnsmasq.d/01-pihole.conf)" ]]; then
+    # List is commented out
+    if [[ "${1}" == "web" ]]; then
+      echo 0;
+    else
+      echo "::: Pi-hole blocking is Disabled";
+    fi
+  elif [[ "$(grep -i "^addn-hosts=/" /etc/dnsmasq.d/01-pihole.conf)" ]]; then
+    # List set
+    if [[ "${1}" == "web" ]]; then
+      echo 1;
+    else
+      echo "::: Pi-hole blocking is Enabled";
+    fi
+  else
+    # Addn-host not found
+    if [[ "${1}" == "web" ]]; then
+      echo 99
+    else
+      echo ":::  No hosts file linked to dnsmasq, adding it in enabled state"
+    fi
+    # Add addn-host= to dnsmasq
+    echo "addn-hosts=/etc/pihole/gravity.list" >> /etc/dnsmasq.d/01-pihole.conf
+    restartDNS
+  fi
+}
+
+tailFunc() {
+  echo "Press Ctrl-C to exit"
+  tail -F /var/log/pihole.log
+  exit 0
+}
+
+piholeCheckoutFunc() {
+  if [[ "$2" == "-h" ]] || [[ "$2" == "--help" ]]; then
+    echo "Usage: pihole checkout [repo] [branch]
+Example: 'pihole checkout master' or 'pihole checkout core dev'
+Switch Pi-hole subsystems to a different Github branch
+
+Repositories:
+  core [branch]       Change the branch of Pi-hole's core subsystem
+  web [branch]        Change the branch of Admin Console subsystem
+
+Branches:
+  master              Update subsystems to the latest stable release
+  dev                 Update subsystems to the latest development release"
+    exit 0
+  fi
+
+  source "${PI_HOLE_SCRIPT_DIR}"/piholeCheckout.sh
+  shift
+  checkout "$@"
+}
+
+tricorderFunc() {
+  if [[ ! -p "/dev/stdin" ]]; then
+    echo "Please do not call Tricorder directly."
+    exit 1
+  fi
+
+  if ! timeout 2 nc -z tricorder.pi-hole.net 9998 &> /dev/null; then
+    echo "Unable to connect to Pi-hole's Tricorder server."
+    exit 1
+  fi
+
+  if command -v openssl &> /dev/null; then
+    openssl s_client -quiet -connect tricorder.pi-hole.net:9998 2> /dev/null < /dev/stdin
+    exit "$?"
+  else
+    echo "Your debug log will be transmitted unencrypted via plain-text"
+    echo "There is a possibility that this could be intercepted by a third party"
+    echo "If you wish to cancel, press Ctrl-C to exit within 10 seconds"
+    secs="10"
+    while [[ "$secs" -gt "0" ]]; do
+       echo -ne "."
+       sleep 1
+       : $((secs--))
+    done
+    echo " "
+    nc tricorder.pi-hole.net 9999 < /dev/stdin
+    exit "$?"
+  fi
+}
+
+helpFunc() {
+  echo "Usage: pihole [options]
+Example: 'pihole -w -h'
+Add '-h' after specific commands for more information on usage
+
+Whitelist/Blacklist Options:
+  -w, whitelist       Whitelist domain(s)
+  -b, blacklist       Blacklist domain(s)
+  -wild, wildcard     Blacklist domain(s), and all its subdomains
+                        Add '-h' for more info on whitelist/blacklist usage
+
+Debugging Options:
+  -d, debug           Start a debugging session
+                        Add '-a' to enable automated debugging
+  -f, flush           Flush the Pi-hole log
+  -r, reconfigure     Reconfigure or Repair Pi-hole subsystems
+  -t, tail            View the live output of the Pi-hole log
+
+Options:
+  -a, admin           Admin Console options
+                        Add '-h' for more info on admin console usage
+  -c, chronometer     Calculates stats and displays to an LCD
+                        Add '-h' for more info on chronometer usage
+  -g, updateGravity   Update the list of ad-serving domains
+  -h, --help, help    Show this help dialog
+  -l, logging         Specify whether the Pi-hole log should be used
+                        Add '-h' for more info on logging usage
+  -q, query           Query the adlists for a specified domain
+                        Add '-exact' AFTER a specified domain for exact match
+  -up, updatePihole   Update Pi-hole subsystems
+  -v, version         Show installed versions of Pi-hole, Admin Console & FTL
+                        Add '-h' for more info on version usage
+  uninstall           Uninstall Pi-hole from your system
+  status              Display the running status of Pi-hole subsystems
+  enable              Enable Pi-hole subsystems
+  disable             Disable Pi-hole subsystems
+                        Add '-h' for more info on disable usage
+  restartdns          Restart Pi-hole subsystems
+  checkout            Switch Pi-hole subsystems to a different Github branch
+                        Add '-h' for more info on checkout usage";
+  exit 0
+}
+
+if [[ $# = 0 ]]; then
+  helpFunc
+fi
+
+# Handle redirecting to specific functions based on arguments
+case "${1}" in
+  "-w" | "whitelist"            ) whitelistFunc "$@";;
+  "-b" | "blacklist"            ) blacklistFunc "$@";;
+  "-wild" | "wildcard"          ) wildcardFunc "$@";;
+  "-d" | "debug"                ) debugFunc "$@";;
+  "-f" | "flush"                ) flushFunc "$@";;
+  "-up" | "updatePihole"        ) updatePiholeFunc;;
+  "-r"  | "reconfigure"         ) reconfigurePiholeFunc;;
+  "-g" | "updateGravity"        ) updateGravityFunc "$@";;
+  "-c" | "chronometer"          ) chronometerFunc "$@";;
+  "-h" | "help"                 ) helpFunc;;
+  "-v" | "version"              ) versionFunc "$@";;
+  "-q" | "query"                ) queryFunc "$@";;
+  "-l" | "logging"              ) piholeLogging "$@";;
+  "uninstall"                   ) uninstallFunc;;
+  "enable"                      ) piholeEnable 1;;
+  "disable"                     ) piholeEnable 0 "$2";;
+  "status"                      ) piholeStatus "$2";;
+  "restartdns"                  ) restartDNS;;
+  "-a" | "admin"                ) webpageFunc "$@";;
+  "-t" | "tail"                 ) tailFunc;;
+  "checkout"                    ) piholeCheckoutFunc "$@";;
+  "tricorder"                   ) tricorderFunc;;
+  *                             ) helpFunc;;
+esac
