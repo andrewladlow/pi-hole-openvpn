@@ -752,7 +752,7 @@ installScripts() {
     install -o "${USER}" -Dm755 -t /usr/local/bin/ pihole
     install -Dm644 ./advanced/bash-completion/pihole /etc/bash_completion.d/pihole
     # See https://github.com/pi-hole/pi-hole/wiki/Nginx-Configuration
-    sed 's/$_SERVER\["SERVER_NAME"\]),/$_SERVER\["HTTP_HOST"\]),/' /var/www/html/admin/scripts/pi-hole/php/auth.php
+    sed -i 's/$_SERVER\["SERVER_NAME"\]),/$_SERVER\["HTTP_HOST"\]),/' /var/www/html/admin/scripts/pi-hole/php/auth.php
     echo " done."
     # TODO more elegant solution
     cd -
@@ -777,7 +777,7 @@ installConfigs() {
       mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.orig
     fi
     cp $NGINX_CFG /etc/nginx/nginx.conf
-    sed -i "s|@IP@|$IPV4_ADDRESS|" $NGINX_SITE
+    sed -i "s|@IP@|$(ifconfig tun0 | awk '/inet /{print $2}')|" $NGINX_SITE
     cp $NGINX_SITE /etc/nginx/sites-available/pi
     ln -sf /etc/nginx/sites-available/pi /etc/nginx/sites-enabled/pi
     cp $PHP_CFG /etc/nginx/snippets/fastcgi-php.conf
@@ -930,12 +930,13 @@ installPiholeWeb() {
       echo ":::     Existing index.php detected, not overwriting"
     else
       echo -n ":::     index.php missing, replacing... "
-      #cp ${PI_HOLE_LOCAL_REPO}/advanced/index.php /var/www/html/pihole/
-      # Replace index.php with nginx version (see: https://github.com/pi-hole/pi-hole/wiki/Nginx-Configuration)
-      cp index.php /var/www/html/pihole/
+      cp ${PI_HOLE_LOCAL_REPO}/advanced/index.php /var/www/html/pihole/
       echo " done!"
     fi
 
+    # Replace index.php with nginx version (see: https://github.com/pi-hole/pi-hole/wiki/Nginx-Configuration)
+    cp index.php /var/www/html/pihole/
+    
     if [ -f "/var/www/html/pihole/index.js" ]; then
       echo ":::     Existing index.js detected, not overwriting"
     else

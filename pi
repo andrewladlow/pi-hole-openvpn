@@ -4,7 +4,7 @@ server {
 
   server_name pi.hole;
 
-  root /var/www/dns;
+  root /var/www/html;
   index pihole/index.php index.php;
   error_page 404 =200 /pihole/index.php;
 
