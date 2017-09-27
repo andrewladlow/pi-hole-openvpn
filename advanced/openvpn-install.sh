@@ -79,96 +79,6 @@ newclient () {
   echo "</tls-auth>" >> ~/$1.ovpn
 }
 
-installLocalDNS() {
-  # Add dummy file if bind isn't already installed
-  if [[ ! -e  /usr/sbin/named ]]; then 
-    if [[ "$OS" = 'debian' ]]; then
-      apt-get install -y bind9
-      touch /etc/bind/.openvpn.script
-    fi
-  else
-    yum install -y bind bind-utils
-    touch /etc/named/.openvpn.script
-  fi
-  
-  # Create a private network for DNS, use existing interface if possible
-  if [[ -z "$(ifconfig | grep eth0:1)" ]]; then
-    if [[ "$OS" = 'debian' ]]; then 
-      cat >> /etc/network/interfaces << EOF
-      
-iface eth0:1 inet static
-  address 192.168.2.1
-  netmask 255.255.255.0
-EOF
-      touch /etc/network/.openvpn.script
-    else 
-      cat >> /etc/sysconfig/network-scripts/ifcfg-eth0:1 << EOF
-DEVICE=eth0:1
-IPADDR=192.168.2.1
-NETMASK=255.255.255.0
-EOF
-      touch /etc/sysconfig/network-scripts/.openvpn.script
-    fi
-    ifup eth0:1
-    PRIV_IP=192.168.2.1
-  else
-    PRIV_IP=$(ifconfig eth0:1 | awk '/inet /{print $2}')
-  fi
-  
-  # Setup local caching recursive server
-  if [[ "$OS" = 'debian' ]]; then 
-    sed -i "s/@PRIV_IP@/$PRIV_IP/" named.conf.options
-    mv -S .bak -fb named.conf.options /etc/bind/named.conf.options
-    systemctl restart bind9
-  else
-    sed -i "s/@PRIV_IP@/$PRIV_IP/" named.conf.options
-    mv -S .bak -fb named.conf.options /etc/named.conf   
-    systemctl restart named
-  fi
-  
-  # Configure system nameserver
-  sed -i "s/nameserver/# nameserver/" /etc/resolv.conf
-  echo -e "\nnameserver 127.0.0.1" >> /etc/resolv.conf
-}
-
-removeLocalDNS() {
-  # Remove config lines added in setup 
-  sed -i "nameserver 127.0.0.1/d" /etc/resolv.conf
-  sed -i "s/# nameserver/nameserver/" /etc/resolv.conf
-  
-  # Uninstall bind and clean dirs if dummy file present
-  if [[ "$OS" = 'debian' ]]; then
-    sed -zi "s/\n\s*listen-on { 127.0.0.1; $PRIV_IP; };\n\s*recursion yes;\n\s*allow-query { localnets; };//" /etc/bind/named.conf.options
-    if [[ -e /etc/bind/.openvpn.script ]]; then
-      apt-get remove -y bind9
-      rm -rf /etc/bind
-    else
-      mv -f /etc/bind/named.conf.options.bak /etc/bind/named.conf.options
-    fi
-    
-    # Remove private interface if it was created with this script
-    if [[ -e /etc/network/.openvpn.script ]]; then
-      ifdown eth0:1
-      rm /etc/network/.openvpn.script
-      sed -zi "s/\n\s*iface eth0:1 inet static\n\saddress 192.168.2.1\n\snetmask 255.255.255.0//" /etc/network/interfaces
-    fi
-  else
-    sed -zi "s/\n\s*listen-on { 127.0.0.1; $PRIV_IP; };\n\s*recursion yes;\n\s*allow-query { localnets; };//" /etc/named.conf
-    if [[ -e /etc/named/.openvpn.script ]]; then
-      yum remove -y bind bind-utils
-      rm -rf /etc/named*
-    else
-      mv -f /etc/named.conf.bak /etc/named.conf
-    fi
-    
-    if [[ -e /etc/sysconfig/network-scripts/.openvpn.script ]]; then
-      ifdown eth0:1
-      rm /etc/sysconfig/network-scripts/.openvpn.script
-      rm /etc/sysconfig/network-scripts/ifcfg-eth0:1
-    fi
-  fi
-}
-
 # Try to get our IP from the system and fallback to the Internet.
 # I do this to make the script compatible with NATed servers (lowendspirit.com)
 # and to avoid getting an IPv6.
@@ -239,7 +149,6 @@ if [[ -e /etc/openvpn/server.conf ]]; then
       echo ""
       read -p "Do you really want to remove OpenVPN? [y/n]: " -e -i n REMOVE
       if [[ "$REMOVE" = 'y' ]]; then
-        removeLocalDNS
         PORT=$(grep '^port ' /etc/openvpn/server.conf | cut -d " " -f 2)
         PROTOCOL=$(grep '^proto ' /etc/openvpn/server.conf | cut -d " " -f 2)
         if pgrep firewalld; then
@@ -325,7 +234,7 @@ else
   echo "   4) NTT"
   echo "   5) Hurricane Electric"
   echo "   6) Verisign"
-  echo "   7) Local"
+  echo "   7) Pi-hole"
   read -p "DNS [1-7]: " -e -i 1 DNS
   echo ""
   echo "Finally, tell me your name for the client certificate"
@@ -413,7 +322,6 @@ EOF
     echo 'push "dhcp-option DNS 64.6.65.6"' >> /etc/openvpn/server.conf
     ;;
   7)
-    installLocalDNS
     echo 'push "dhcp-option DNS 10.8.0.1"' >> /etc/openvpn/server.conf
     echo 'push "dhcp-option DNS 10.8.0.1"' >> /etc/openvpn/server.conf
     ;;

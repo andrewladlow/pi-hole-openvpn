@@ -24,7 +24,7 @@ setupVars=/etc/pihole/setupVars.conf
 
 webInterfaceGitUrl="https://github.com/pi-hole/AdminLTE.git"
 webInterfaceDir="/var/www/html/admin"
-piholeGitUrl="https://github.com/andrewladlow/pi-hole.git"
+piholeGitUrl="https://github.com/andrewladlow/pi-hole-openvpn.git"
 PI_HOLE_LOCAL_REPO="/etc/.pihole"
 PI_HOLE_FILES=(chronometer list piholeDebug piholeLogFlush setupLCD update version gravity uninstall webpage)
 PI_HOLE_INSTALL_DIR="/opt/pihole"
@@ -34,7 +34,6 @@ IPV4_ADDRESS=""
 IPV6_ADDRESS=""
 QUERY_LOGGING=true
 INSTALL_WEB=true
-
 
 # Find the rows and columns will default to 80x24 is it can not be detected
 screen_size=$(stty size 2>/dev/null || echo 24 80)
@@ -78,84 +77,80 @@ show_ascii_berry() {
 "
 }
 
-
 # Compatibility
 distro_check() {
-if command -v apt-get &> /dev/null; then
-  #Debian Family
-  #############################################
-  PKG_MANAGER="apt-get"
-  UPDATE_PKG_CACHE="${PKG_MANAGER} update"
-  PKG_INSTALL=(${PKG_MANAGER} --yes --no-install-recommends install)
-  # grep -c will return 1 retVal on 0 matches, block this throwing the set -e with an OR TRUE
-  PKG_COUNT="${PKG_MANAGER} -s -o Debug::NoLocking=true upgrade | grep -c ^Inst || true"
-  # #########################################
-  # fixes for dependency differences
-  # Debian 7 doesn't have iproute2 use iproute
-  if ${PKG_MANAGER} install --dry-run iproute2 > /dev/null 2>&1; then
-    iproute_pkg="iproute2"
+  if command -v apt-get &> /dev/null; then
+    #Debian Family
+    #############################################
+    PKG_MANAGER="apt-get"
+    UPDATE_PKG_CACHE="${PKG_MANAGER} update"
+    PKG_INSTALL=(${PKG_MANAGER} --yes --no-install-recommends install)
+    # grep -c will return 1 retVal on 0 matches, block this throwing the set -e with an OR TRUE
+    PKG_COUNT="${PKG_MANAGER} -s -o Debug::NoLocking=true upgrade | grep -c ^Inst || true"
+    # #########################################
+    # fixes for dependency differences
+    # Debian 7 doesn't have iproute2 use iproute
+    if ${PKG_MANAGER} install --dry-run iproute2 > /dev/null 2>&1; then
+      iproute_pkg="iproute2"
+    else
+      iproute_pkg="iproute"
+    fi
+    # Prefer the php metapackage if it's there, fall back on the php5 packages
+    if ${PKG_MANAGER} install --dry-run php > /dev/null 2>&1; then
+      phpVer="php"
+    else
+      phpVer="php5"
+    fi
+    # #########################################
+    INSTALLER_DEPS=(apt-utils dialog debconf dhcpcd5 git ${iproute_pkg} whiptail)
+    PIHOLE_DEPS=(bc cron curl dnsmasq dnsutils iputils-ping lsof netcat sudo unzip wget)
+    PIHOLE_WEB_DEPS=(nginx php7.0-fpm)
+    BIND_CFG=/etc/bind/named.conf.options
+  
+    test_dpkg_lock() {
+      i=0
+      while fuser /var/lib/dpkg/lock >/dev/null 2>&1 ; do
+        sleep 0.5
+        ((i=i+1))
+      done
+      # Always return success, since we only return if there is no
+      # lock (anymore)
+      return 0
+    }
+
+  elif command -v rpm &> /dev/null; then
+    # Fedora Family
+    if command -v dnf &> /dev/null; then
+      PKG_MANAGER="dnf"
+    else
+      PKG_MANAGER="yum"
+    fi
+
+  # Fedora and family update cache on every PKG_INSTALL call, no need for a separate update.
+    UPDATE_PKG_CACHE=":"
+    # Fetch PHP 7.0 repo
+    rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+    PKG_INSTALL=(${PKG_MANAGER} install -y)
+    PKG_COUNT="${PKG_MANAGER} check-update | egrep '(.i686|.x86|.noarch|.arm|.src)' | wc -l"
+    INSTALLER_DEPS=(dialog git iproute net-tools newt procps-ng)
+    PIHOLE_DEPS=(bc bind-utils cronie curl dnsmasq findutils nmap-ncat sudo unzip wget)
+    PIHOLE_WEB_DEPS=(nginx php70w-fpm)
+    BIND_CFG=/etc/named.conf
+    
+    if ! grep -q 'Fedora' /etc/redhat-release; then
+      INSTALLER_DEPS=("${INSTALLER_DEPS[@]}" "epel-release");
+    fi
   else
-    iproute_pkg="iproute"
+    echo "OS distribution not supported"
+    exit
   fi
-  # Prefer the php metapackage if it's there, fall back on the php5 packages
-  if ${PKG_MANAGER} install --dry-run php > /dev/null 2>&1; then
-    phpVer="php"
-  else
-    phpVer="php5"
-  fi
-  # #########################################
-  INSTALLER_DEPS=(apt-utils dialog debconf dhcpcd5 git ${iproute_pkg} whiptail)
-  PIHOLE_DEPS=(bc cron curl dnsmasq dnsutils iputils-ping lsof netcat sudo unzip wget)
-  PIHOLE_WEB_DEPS=(nginx php7.0-fpm)
+
   NGINX_USER="www-data"
   NGINX_GROUP="www-data"
-  NGINX_CFG="nginx.conf"
-  NGINX_SITE="pi"
-  PHP_CFG="fastcgi-php.conf"
+  NGINX_CFG="advanced/nginx.conf"
+  NGINX_SITE="advanced/pi"
+  PHP_CFG="fastcg-php.conf"
   DNSMASQ_USER="dnsmasq"
-
-  test_dpkg_lock() {
-    i=0
-    while fuser /var/lib/dpkg/lock >/dev/null 2>&1 ; do
-      sleep 0.5
-      ((i=i+1))
-    done
-    # Always return success, since we only return if there is no
-    # lock (anymore)
-    return 0
-  }
-
-elif command -v rpm &> /dev/null; then
-  # Fedora Family
-  if command -v dnf &> /dev/null; then
-    PKG_MANAGER="dnf"
-  else
-    PKG_MANAGER="yum"
-  fi
-
-# Fedora and family update cache on every PKG_INSTALL call, no need for a separate update.
-  UPDATE_PKG_CACHE=":"
-  # Fetch PHP 7.0 repo
-  rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
-  PKG_INSTALL=(${PKG_MANAGER} install -y)
-  PKG_COUNT="${PKG_MANAGER} check-update | egrep '(.i686|.x86|.noarch|.arm|.src)' | wc -l"
-  INSTALLER_DEPS=(dialog git iproute net-tools newt procps-ng)
-  PIHOLE_DEPS=(bc bind-utils cronie curl dnsmasq findutils nmap-ncat sudo unzip wget)
-  PIHOLE_WEB_DEPS=(nginx php70w-fpm)
-  if ! grep -q 'Fedora' /etc/redhat-release; then
-    INSTALLER_DEPS=("${INSTALLER_DEPS[@]}" "epel-release");
-  fi
-    NGINX_USER="www-data"
-    NGINX_GROUP="www-data"
-    NGINX_CFG="nginx.conf"
-    NGINX_SITE="pi"
-    PHP_CFG="fastcg-php.conf"
-    DNSMASQ_USER="nobody"
-
-else
-  echo "OS distribution not supported"
-  exit
-fi
 }
 
 is_repo() {
@@ -523,6 +518,58 @@ valid_ip() {
   return ${stat}
 }
 
+installLocalDNS() {
+  # Add dummy file if bind isn't already installed
+  if [[ ! -e  /usr/sbin/named ]]; then 
+    if [[ "$OS" = 'debian' ]]; then
+      apt-get install -y bind9
+      touch /etc/bind/.del
+    fi
+  else
+    yum install -y bind bind-utils
+    touch /etc/named/.del
+  fi
+  
+  # Create a private network for DNS, use existing interface if possible
+  if [[ -z "$(ifconfig | grep eth0:1)" ]]; then
+    if [[ "$OS" = 'debian' ]]; then 
+      cat >> /etc/network/interfaces << EOF
+      
+iface eth0:1 inet static
+  address 192.168.2.1
+  netmask 255.255.255.0
+EOF
+      touch /etc/network/.del
+    else 
+      cat >> /etc/sysconfig/network-scripts/ifcfg-eth0:1 << EOF
+DEVICE=eth0:1
+IPADDR=192.168.2.1
+NETMASK=255.255.255.0
+EOF
+      touch /etc/sysconfig/network-scripts/.del
+    fi
+    ifup eth0:1
+    PRIV_IP=192.168.2.1
+  else
+    PRIV_IP=$(ifconfig eth0:1 | awk '/inet /{print $2}')
+  fi
+  
+  # Setup local caching recursive server
+  if [[ "$OS" = 'debian' ]]; then 
+    sed -i "s/@PRIV_IP@/$PRIV_IP/" $BIND_CFG
+    cp -S .bak -fb $BIND_CFG /etc/bind/named.conf.options
+    systemctl restart bind9
+  else
+    sed -i "s/@PRIV_IP@/$PRIV_IP/" $BIND_CFG
+    cp -S .bak -fb $BIND_CFG /etc/named.conf   
+    systemctl restart named
+  fi
+  
+  # Configure system nameserver
+  sed -i "s/nameserver/# nameserver/" /etc/resolv.conf
+  echo -e "\nnameserver 127.0.0.1" >> /etc/resolv.conf
+}
+
 setDNS() {
   local DNSSettingsCorrect
 
@@ -570,6 +617,7 @@ setDNS() {
       ;;
     Local)
       echo "::: Using Local servers."
+      installLocalDNS
       PIHOLE_DNS_1="127.0.0.1"
       PIHOLE_DNS_2=$(ifconfig eth0:1 | awk '/inet /{print $2}')
       ;;
@@ -933,9 +981,6 @@ installPiholeWeb() {
       cp ${PI_HOLE_LOCAL_REPO}/advanced/index.php /var/www/html/pihole/
       echo " done!"
     fi
-    
-    # Replace index.php with nginx version (see: https://github.com/pi-hole/pi-hole/wiki/Nginx-Configuration)
-    cp index.php /var/www/html/pihole/
     
     if [ -f "/var/www/html/pihole/index.js" ]; then
       echo ":::     Existing index.js detected, not overwriting"

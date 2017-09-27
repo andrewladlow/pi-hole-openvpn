@@ -8,7 +8,47 @@
 # This file is copyright under the latest version of the EUPL.
 # Please see LICENSE file for your rights under this license.
 
-
+removeLocalDNS() {
+  # Remove config lines added in setup 
+  sed -i "nameserver 127.0.0.1/d" /etc/resolv.conf
+  sed -i "s/# nameserver/nameserver/" /etc/resolv.conf
+  
+  # Uninstall bind and clean dirs if dummy file present
+  if [[ "$OS" = 'debian' ]]; then
+    #sed -zi "s/\n\s*listen-on { 127.0.0.1; $PRIV_IP; };\n\s*recursion yes;\n\s*allow-query { localnets; };//" /etc/bind/named.conf.options
+    rm /etc/bind/named.conf.options
+    mv /etc/bind/named.conf.options.bak /etc/bind/named.conf.options
+    if [[ -e /etc/bind/.del ]]; then
+      apt-get remove -y bind9
+      rm -rf /etc/bind
+    else
+      mv -f /etc/bind/named.conf.options.bak /etc/bind/named.conf.options
+    fi
+    
+    # Remove private interface if it was created with this script
+    if [[ -e /etc/network/.del ]]; then
+      ifdown eth0:1
+      rm /etc/network/.del
+      sed -zi "s/\n\s*iface eth0:1 inet static\n\saddress 192.168.2.1\n\snetmask 255.255.255.0//" /etc/network/interfaces
+    fi
+  else
+    #sed -zi "s/\n\s*listen-on { 127.0.0.1; $PRIV_IP; };\n\s*recursion yes;\n\s*allow-query { localnets; };//" /etc/named.conf
+    rm /etc/named.conf
+    mv /etc/named.conf.bak /etc/named.conf
+    if [[ -e /etc/named/.del ]]; then
+      yum remove -y bind bind-utils
+      rm -rf /etc/named*
+    else
+      mv -f /etc/named.conf.bak /etc/named.conf
+    fi
+    
+    if [[ -e /etc/sysconfig/network-scripts/.openvpn.script ]]; then
+      ifdown eth0:1
+      rm /etc/sysconfig/network-scripts/.openvpn.script
+      rm /etc/sysconfig/network-scripts/ifcfg-eth0:1
+    fi
+  fi
+}
 
 # Must be root to uninstall
 if [[ ${EUID} -eq 0 ]]; then
@@ -25,6 +65,8 @@ else
 	fi
 fi
 
+if [[ -e ]]
+
 # Compatability
 if [ -x "$(command -v rpm)" ]; then
 	# Fedora Family
@@ -34,7 +76,7 @@ if [ -x "$(command -v rpm)" ]; then
 		PKG_MANAGER="yum"
 	fi
 	PKG_REMOVE="${PKG_MANAGER} remove -y"
-	PIHOLE_DEPS=( bind-utils bc dnsmasq lighttpd lighttpd-fastcgi php-common git curl unzip wget findutils )
+	PIHOLE_DEPS=( bind-utils bc dnsmasq nginx php70w-fpm git curl unzip wget findutils )
 	package_check() {
 		rpm -qa | grep ^$1- > /dev/null
 	}
@@ -45,7 +87,7 @@ elif [ -x "$(command -v apt-get)" ]; then
 	# Debian Family
 	PKG_MANAGER="apt-get"
 	PKG_REMOVE="${PKG_MANAGER} -y remove --purge"
-	PIHOLE_DEPS=( dnsutils bc dnsmasq lighttpd php5-common git curl unzip wget )
+	PIHOLE_DEPS=( dnsutils bc dnsmasq nginx php7.0-fpm git curl unzip wget )
 	package_check() {
 		dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -c "ok installed"
 	}
