@@ -17,16 +17,16 @@ removeLocalDNS() {
   if [[ "$OS" = 'debian' ]]; then
     #sed -zi "s/\n\s*listen-on { 127.0.0.1; $PRIV_IP; };\n\s*recursion yes;\n\s*allow-query { localnets; };//" /etc/bind/named.conf.options
     rm /etc/bind/named.conf.options
-    mv /etc/bind/named.conf.options.bak /etc/bind/named.conf.options
-    if [[ -e /etc/bind/.del ]]; then
+    mv /etc/bind/named.conf.options.orig /etc/bind/named.conf.options
+    if [[ -e "/etc/bind/.del" ]]; then
       apt-get remove -y bind9
       rm -rf /etc/bind
     else
-      mv -f /etc/bind/named.conf.options.bak /etc/bind/named.conf.options
+      mv -f /etc/bind/named.conf.options.orig /etc/bind/named.conf.options
     fi
     
     # Remove private interface if it was created with this script
-    if [[ -e /etc/network/.del ]]; then
+    if [[ -e "/etc/network/.del" ]]; then
       ifdown eth0:1
       rm /etc/network/.del
       sed -zi "s/\n\s*iface eth0:1 inet static\n\saddress 192.168.2.1\n\snetmask 255.255.255.0//" /etc/network/interfaces
@@ -34,12 +34,12 @@ removeLocalDNS() {
   else
     #sed -zi "s/\n\s*listen-on { 127.0.0.1; $PRIV_IP; };\n\s*recursion yes;\n\s*allow-query { localnets; };//" /etc/named.conf
     rm /etc/named.conf
-    mv /etc/named.conf.bak /etc/named.conf
-    if [[ -e /etc/named/.del ]]; then
+    mv /etc/named.conf.orig /etc/named.conf
+    if [[ -e "/etc/named/.del" ]]; then
       yum remove -y bind bind-utils
       rm -rf /etc/named*
     else
-      mv -f /etc/named.conf.bak /etc/named.conf
+      mv -f /etc/named.conf.orig /etc/named.conf
     fi
     
     if [[ -e /etc/sysconfig/network-scripts/.openvpn.script ]]; then
@@ -64,8 +64,6 @@ else
 		exit 1
 	fi
 fi
-
-if [[ -e ]]
 
 # Compatability
 if [ -x "$(command -v rpm)" ]; then
@@ -151,7 +149,6 @@ removeNoPurge() {
 	echo "::: Removing the Pi-hole Web server files..."
 	${SUDO} rm -rf /var/www/html/admin &> /dev/null
 	${SUDO} rm -rf /var/www/html/pihole &> /dev/null
-	${SUDO} rm /var/www/html/index.lighttpd.orig &> /dev/null
 
 	# If the web directory is empty after removing these files, then the parent html folder can be removed.
 	if [ -d "/var/www/html" ]; then
@@ -172,19 +169,20 @@ removeNoPurge() {
 	fi
 
 	# Attempt to preserve backwards compatibility with older versions
-	if [[ -f /etc/cron.d/pihole ]];then
+	if [[ -f /etc/cron.d/pihole ]]; then
 		echo "::: Removing cron.d/pihole..."
 		${SUDO} rm /etc/cron.d/pihole &> /dev/null
 	fi
 
 	echo "::: Removing config files and scripts..."
-	package_check lighttpd > /dev/null
+	package_check nginx > /dev/null
 	if [ $? -eq 1 ]; then
-		${SUDO} rm -rf /etc/lighttpd/ &> /dev/null
-	else
-		if [ -f /etc/lighttpd/lighttpd.conf.orig ]; then
-			${SUDO} mv /etc/lighttpd/lighttpd.conf.orig /etc/lighttpd/lighttpd.conf
-		fi
+    # Check if nginx was installed prior to pi-hole 
+    if [[ -e "/etc/nginx/.del" ]]; then
+      ${SUDO} rm -rf /etc/nginx/ &> /dev/null
+    else
+      ${SUDO} mv /etc/nginx/nginx.conf.orig /etc/nginx/nginx.conf
+    fi
 	fi
 
 	${SUDO} rm /etc/dnsmasq.d/adList.conf &> /dev/null

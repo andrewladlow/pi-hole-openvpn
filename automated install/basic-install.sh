@@ -557,11 +557,11 @@ EOF
   # Setup local caching recursive server
   if [[ "$OS" = 'debian' ]]; then 
     sed -i "s/@PRIV_IP@/$PRIV_IP/" $BIND_CFG
-    cp -S .bak -fb $BIND_CFG /etc/bind/named.conf.options
+    cp -S .orig -fb $BIND_CFG /etc/bind/named.conf.options
     systemctl restart bind9
   else
     sed -i "s/@PRIV_IP@/$PRIV_IP/" $BIND_CFG
-    cp -S .bak -fb $BIND_CFG /etc/named.conf   
+    cp -S .orig -fb $BIND_CFG /etc/named.conf   
     systemctl restart named
   fi
   
@@ -738,6 +738,12 @@ version_check_dnsmasq() {
     cp ${dnsmasq_original_config} ${dnsmasq_conf}
     echo " done."
   fi
+  
+    # Force dnsmasq to listen on pi-hole IP only (with local upstream using 127.0.0.1)
+  if [[ "$PIHOLE_DNS_1" = "127.0.0.1" ]]; then
+    echo "except-interface=lo" >> ${dnsmasq_pihole_01_snippet}
+    echo "bind-interfaces" >> ${dnsmasq_pihole_01_snippet}
+  fi
 
   echo -n ":::    Copying 01-pihole.conf to /etc/dnsmasq.d/01-pihole.conf..."
   cp ${dnsmasq_pihole_01_snippet} ${dnsmasq_pihole_01_location}
@@ -753,10 +759,6 @@ version_check_dnsmasq() {
   else
     sed -i '/^server=@DNS2@/d' ${dnsmasq_pihole_01_location}
   fi
-  
-  # Force dnsmasq to listen on pi-hole IP only (with local upstream using 127.0.0.1)
-  echo "except-interface=lo" >> ${dnsmasq_pihole_01_location}
-  echo "bind-interfaces" >> ${dnsmasq_pihole_01_location}
 
   sed -i 's/^#conf-dir=\/etc\/dnsmasq.d$/conf-dir=\/etc\/dnsmasq.d/' ${dnsmasq_conf}
 
@@ -800,7 +802,8 @@ installScripts() {
     install -o "${USER}" -Dm755 -t /usr/local/bin/ pihole
     install -Dm644 ./advanced/bash-completion/pihole /etc/bash_completion.d/pihole
     # See https://github.com/pi-hole/pi-hole/wiki/Nginx-Configuration
-    sed -i 's/$_SERVER\["SERVER_NAME"\]),/$_SERVER\["HTTP_HOST"\]),/' /var/www/html/admin/scripts/pi-hole/php/auth.php
+    # sed -i 's/$_SERVER\["SERVER_NAME"\]),/$_SERVER\["HTTP_HOST"\]),/' /var/www/html/admin/scripts/pi-hole/php/auth.php
+    
     echo " done."
     # TODO more elegant solution
     cd -
@@ -821,6 +824,7 @@ installConfigs() {
     if [ ! -d "/etc/nginx" ]; then
       mkdir -p /etc/nginx/{sites-available, sites-enabled, snippets}
       chown "${USER}":root /etc/nginx
+      touch /etc/nginx/.del
     elif [ -e "/etc/nginx/nginx.conf" ]; then
       mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.orig
     fi
@@ -1108,7 +1112,7 @@ finalExports() {
 
   # Update variables in setupVars.conf file
   if [ -e "${setupVars}" ]; then
-    sed -i.update.bak '/PIHOLE_INTERFACE/d;/IPV4_ADDRESS/d;/IPV6_ADDRESS/d;/PIHOLE_DNS_1/d;/PIHOLE_DNS_2/d;/QUERY_LOGGING/d;/INSTALL_WEB/d;' "${setupVars}"
+    sed -i.update.orig '/PIHOLE_INTERFACE/d;/IPV4_ADDRESS/d;/IPV6_ADDRESS/d;/PIHOLE_DNS_1/d;/PIHOLE_DNS_2/d;/QUERY_LOGGING/d;/INSTALL_WEB/d;' "${setupVars}"
   fi
     {
   echo "PIHOLE_INTERFACE=${PIHOLE_INTERFACE}"
@@ -1311,6 +1315,8 @@ clone_or_update_repos() {
       { echo "!!! Unable to clone ${webInterfaceGitUrl} into ${webInterfaceDir}, unable to continue."; \
         exit 1; \
       }
+      # Fix for missing domains on block page with Edge browser
+      cp ${PI_HOLE_LOCAL_REPO}/advanced/queryads.js ${webInterfaceDir}/admin/scripts/pi-hole/js/queryads.js
     fi
   fi
 }
